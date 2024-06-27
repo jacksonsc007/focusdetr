@@ -135,6 +135,7 @@ def _get_clones(module, N, layer_share=False):
         return nn.ModuleList([module for i in range(N)])
     else:
         return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+
 class FOCUS_DETRTransformerDecoder(TransformerLayerSequence):
     def __init__(
         self,
@@ -249,6 +250,7 @@ class FOCUS_DETRTransformerDecoder(TransformerLayerSequence):
         if self.return_intermediate:
             return torch.stack(intermediate), torch.stack(intermediate_reference_points)
         return output, reference_points
+
 class FOCUS_DETRTransformer(nn.Module):
     """Transformer module for FOCUS_DETR
 
@@ -479,6 +481,11 @@ class FOCUS_DETRTransformer(nn.Module):
         output_memory, output_proposals,_ = self.gen_encoder_output_proposals(
             memory, mask_flatten, spatial_shapes
         )
+        # use foreground inds to sample output memory and proposals
+        foreground_proposal=torch.topk(backbone_mask_prediction, self.two_stage_num_proposals, dim=1)[1]
+        output_memory = torch.gather(output_memory, dim=1, index=foreground_proposal.unsqueeze(-1).repeat(1,1,self.embed_dim))
+        output_proposals = torch.gather(output_proposals, dim=1, index=foreground_proposal.unsqueeze(-1).repeat(1,1,4))
+
         # output_memory: bs, num_tokens, c
         # output_proposals: bs, num_tokens, 4. unsigmoided.
         enc_outputs_class = self.decoder.class_embed[self.decoder.num_layers](output_memory)

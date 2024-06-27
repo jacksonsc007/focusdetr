@@ -1,5 +1,5 @@
-FocusDETR with the following support:
+Branch: two_stage_variant
 
-1. mini train coco
-2. shortersize 480
-3. resnet 18 backbone
+# v1
+## v1.0
+Sparse tokens for two proposals generation.

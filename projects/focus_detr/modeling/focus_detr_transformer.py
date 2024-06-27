@@ -81,6 +81,13 @@ class FOCUS_DETRTransformerEncoder(TransformerLayerSequence):
             self.post_norm_layer = nn.LayerNorm(self.embed_dim)
         else:
             self.post_norm_layer = None
+        
+        # 
+        self.num_heads=num_heads
+        self.attn_drop=attn_dropout
+        self.feedforward_dim=feedforward_dim
+        self.ffn_drop=ffn_dropout
+
     def forward(
         self,
         backbone_mask_prediction,
@@ -287,6 +294,30 @@ class FOCUS_DETRTransformer(nn.Module):
         self.enc_output = nn.Linear(self.embed_dim, self.embed_dim)
         self.enc_output_norm = nn.LayerNorm(self.embed_dim)
         self.enc_mask_predictor = MaskPredictor(self.embed_dim, self.embed_dim)
+
+        #
+        self.num_heads = self.encoder.num_heads
+        self.attn_dropout = self.encoder.attn_drop
+        self.feedforward_dim = self.encoder.feedforward_dim
+        self.ffn_dropout = self.encoder.ffn_drop
+        self.two_stage_attn_layer = BaseTransformerLayer(
+            attn=[
+                MultiheadAttention(
+                    embed_dim=self.embed_dim,
+                    num_heads=self.num_heads,
+                    attn_drop=self.attn_dropout,
+                    batch_first=True,
+                )
+            ],
+            ffn=FFN(
+                embed_dim=self.embed_dim,
+                feedforward_dim=self.feedforward_dim,
+                output_dim=self.embed_dim,
+                ffn_drop=self.ffn_dropout,
+            ),
+            norm=nn.LayerNorm(self.embed_dim),
+            operation_order=("self_attn", "norm", "ffn", "norm"),
+        )
         self.init_weights()
 
     def init_weights(self):
@@ -390,6 +421,8 @@ class FOCUS_DETRTransformer(nn.Module):
     def upsamplelike(self, inputs):
         src, size = inputs
         return F.interpolate(src, size, mode='bilinear', align_corners=True)
+    
+
     def forward(
         self,
         multi_level_feats,
@@ -485,6 +518,15 @@ class FOCUS_DETRTransformer(nn.Module):
         foreground_proposal=torch.topk(backbone_mask_prediction, self.two_stage_num_proposals, dim=1)[1]
         output_memory = torch.gather(output_memory, dim=1, index=foreground_proposal.unsqueeze(-1).repeat(1,1,self.embed_dim))
         output_proposals = torch.gather(output_proposals, dim=1, index=foreground_proposal.unsqueeze(-1).repeat(1,1,4))
+        output_memory_pos_embed = torch.gather(lvl_pos_embed_flatten, dim=1, index=foreground_proposal.unsqueeze(-1).repeat(1,1,self.embed_dim))
+        """Impose self-attention on output memory to match one2one matching of encoder output"""
+        output_memory = self.two_stage_attn_layer(
+            query = output_memory,
+            key = None,
+            value = None,
+            query_pos = output_memory_pos_embed
+        )
+
 
         # output_memory: bs, num_tokens, c
         # output_proposals: bs, num_tokens, 4. unsigmoided.
